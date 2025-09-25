@@ -21,6 +21,7 @@ type model struct {
 	width        int
 	height       int
 	title        string
+	author       string
 	err          error
 }
 
@@ -28,6 +29,7 @@ type errMsg error
 
 func initialModel() model {
 	// Initialize glamour renderer with dark theme
+	// Note: WithAutoStyle() can be slow on some terminals due to capability detection
 	r, _ := glamour.NewTermRenderer(
 		glamour.WithAutoStyle(),
 		glamour.WithWordWrap(80),
@@ -42,6 +44,7 @@ func initialModel() model {
 		renderer:     r,
 		progress:     prog,
 		title:        "",
+		author:       "",
 	}
 }
 
@@ -58,10 +61,16 @@ func loadSlides() tea.Msg {
 	var slides []string
 	var filenames []string
 	var title string
+	var author string
 
 	// Load title from _title.md if it exists
 	if titleContent, err := os.ReadFile("slides/_title.md"); err == nil {
 		title = strings.TrimSpace(string(titleContent))
+	}
+
+	// Load author from _author.md if it exists
+	if authorContent, err := os.ReadFile("slides/_author.md"); err == nil {
+		author = strings.TrimSpace(string(authorContent))
 	}
 
 	// Collect markdown files (excluding files starting with underscore)
@@ -83,12 +92,13 @@ func loadSlides() tea.Msg {
 		slides = append(slides, string(content))
 	}
 
-	return slidesLoadedMsg{slides: slides, title: title}
+	return slidesLoadedMsg{slides: slides, title: title, author: author}
 }
 
 type slidesLoadedMsg struct {
 	slides []string
 	title  string
+	author string
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -111,6 +121,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case slidesLoadedMsg:
 		m.slides = msg.slides
 		m.title = msg.title
+		m.author = msg.author
 		// Set initial progress percentage
 		if len(m.slides) > 0 {
 			percentage := float64(m.currentSlide+1) / float64(len(m.slides))
@@ -193,7 +204,7 @@ func (m model) View() string {
 	// Get the animated gradient progress bar
 	progressBar := m.progress.View()
 
-	// Create status line
+	// Create three-section status line with chevrons
 	slideInfo := fmt.Sprintf("Slide %d/%d", m.currentSlide+1, len(m.slides))
 
 	titleText := m.title
@@ -201,46 +212,69 @@ func (m model) View() string {
 		titleText = "Slidetty"
 	}
 
-	statusStyle := lipgloss.NewStyle().
-		Width(m.width).
+	authorText := m.author
+	if authorText == "" {
+		authorText = "Unknown"
+	}
+
+	// Define styles for the three sections
+	leftStyle := lipgloss.NewStyle().
 		Background(lipgloss.Color("#000080")).
 		Foreground(lipgloss.Color("15")).
 		Padding(0, 1)
 
-	// Create status content with proper alignment
-	statusLeft := slideInfo
-	statusRight := titleText
+	centerStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#1E3A8A")).
+		Foreground(lipgloss.Color("15")).
+		PaddingLeft(1).
+		PaddingRight(0)
 
-	// Calculate available width (account for padding)
-	availableWidth := m.width - 4 // Account for padding (2 on each side)
-	totalTextWidth := len(statusLeft) + len(statusRight)
+	rightStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#000080")).
+		Foreground(lipgloss.Color("15")).
+		Padding(0, 1)
 
-	// If text is too long, truncate the title
-	if totalTextWidth > availableWidth {
-		maxTitleWidth := availableWidth - len(statusLeft) - 4 // Reserve 4 spaces for spacing
-		if maxTitleWidth < 10 {
-			statusRight = "Slidetty"
-		} else if maxTitleWidth < len(statusRight) {
-			statusRight = statusRight[:maxTitleWidth-3] + "..."
-		}
+	// Chevron styles
+	leftChevronStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#1E3A8A")).
+		Foreground(lipgloss.Color("#000080"))
+
+	rightChevronStyle := lipgloss.NewStyle().
+		Background(lipgloss.Color("#000080")).
+		Foreground(lipgloss.Color("#1E3A8A"))
+
+	// Calculate section widths (approximate thirds)
+	totalWidth := m.width
+	chevronWidth := 1
+	sectionWidth := (totalWidth - 2*chevronWidth) / 3
+
+	// Adjust for any remaining width
+	leftWidth := sectionWidth
+	centerWidth := sectionWidth
+	rightWidth := totalWidth - leftWidth - centerWidth - 2*chevronWidth
+
+	// Truncate text if needed
+	if len(slideInfo) > leftWidth-2 {
+		slideInfo = slideInfo[:leftWidth-5] + "..."
+	}
+	if len(authorText) > centerWidth-2 {
+		authorText = authorText[:centerWidth-5] + "..."
+	}
+	if len(titleText) > rightWidth-2 {
+		titleText = titleText[:rightWidth-5] + "..."
 	}
 
-	// Recalculate after potential truncation
-	totalTextWidth = len(statusLeft) + len(statusRight)
-	remainingSpace := availableWidth - totalTextWidth
+	// Create sections with proper width and alignment
+	leftSection := leftStyle.Width(leftWidth).Render(slideInfo)
+	centerSection := centerStyle.Width(centerWidth).Align(lipgloss.Center).Render(authorText)
+	rightSection := rightStyle.Width(rightWidth).Align(lipgloss.Right).Render(titleText)
 
-	var statusContent string
-	if remainingSpace > 0 {
-		statusContent = fmt.Sprintf("%s%s%s",
-			statusLeft,
-			strings.Repeat(" ", remainingSpace+2), // Add 2 for spacing
-			statusRight)
-	} else {
-		// Minimal spacing if very tight
-		statusContent = fmt.Sprintf("%s %s", statusLeft, statusRight)
-	}
+	// Create chevrons using Nerd Font Powerline symbol U+E0B2
+	leftChevron := leftChevronStyle.Render("\uE0B0")
+	rightChevron := rightChevronStyle.Render("\uE0B0")
 
-	statusLine := statusStyle.Render(statusContent)
+	// Combine all sections
+	statusLine := lipgloss.JoinHorizontal(lipgloss.Top, leftSection, leftChevron, centerSection, rightChevron, rightSection)
 
 	return content + "\n" + statusLine + "\n" + progressBar
 }

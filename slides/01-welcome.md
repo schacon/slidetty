@@ -1,9 +1,7 @@
-# Welcome to Slidetty
+# The GitButler CLI
 
-A beautiful TUI slideshow app built with Bubble Tea and Glamour.
+## A quick introduction to a new version control CLI tool.
 
-## Features
+By @schacon
 
-- Navigate with arrow keys
-- Beautiful markdown rendering
-- Lightweight and fast
+
