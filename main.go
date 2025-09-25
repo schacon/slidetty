@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -15,6 +17,7 @@ import (
 
 type model struct {
 	slides         []string
+	slidePaths     []string
 	currentSlide   int
 	renderer       *glamour.TermRenderer
 	progress       progress.Model
@@ -25,6 +28,9 @@ type model struct {
 	err            error
 	revealConfigs  []revealConfig
 	revealProgress map[int]int
+	showEditor     bool
+	editor         textarea.Model
+	editorPath     string
 }
 
 type errMsg error
@@ -33,6 +39,7 @@ type slideReloadedMsg struct {
 	slideIndex int
 	content    string
 	config     revealConfig
+	path       string
 }
 
 type revealConfig struct {
@@ -75,6 +82,7 @@ func initialModel() model {
 
 	return model{
 		slides:         []string{},
+		slidePaths:     []string{},
 		currentSlide:   0,
 		renderer:       r,
 		progress:       prog,
@@ -100,6 +108,7 @@ func loadSlides() tea.Msg {
 	var title string
 	var author string
 	var configs []revealConfig
+	var paths []string
 
 	// Load title from _title.md if it exists
 	if titleContent, err := os.ReadFile("slides/_title.md"); err == nil {
@@ -123,16 +132,18 @@ func loadSlides() tea.Msg {
 
 	// Read file contents
 	for _, filename := range filenames {
-		content, err := os.ReadFile(filepath.Join("slides", filename))
+		fullPath := filepath.Join("slides", filename)
+		content, err := os.ReadFile(fullPath)
 		if err != nil {
 			return errMsg(err)
 		}
 		slide := string(content)
 		slides = append(slides, slide)
 		configs = append(configs, analyzeReveal(slide))
+		paths = append(paths, fullPath)
 	}
 
-	return slidesLoadedMsg{slides: slides, title: title, author: author, revealConfigs: configs}
+	return slidesLoadedMsg{slides: slides, title: title, author: author, revealConfigs: configs, paths: paths}
 }
 
 func reloadSlide(slideIndex int) tea.Cmd {
@@ -166,45 +177,124 @@ func reloadSlide(slideIndex int) tea.Cmd {
 		}
 
 		slide := string(content)
-		return slideReloadedMsg{slideIndex: slideIndex, content: slide, config: analyzeReveal(slide)}
+		return slideReloadedMsg{slideIndex: slideIndex, content: slide, config: analyzeReveal(slide), path: filepath.Join("slides", filenames[slideIndex])}
 	}
 }
 
 type slidesLoadedMsg struct {
 	slides        []string
+	paths         []string
 	title         string
 	author        string
 	revealConfigs []revealConfig
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.showEditor {
+		switch msg := msg.(type) {
+		case tea.WindowSizeMsg:
+			m.width = msg.Width
+			m.height = msg.Height
+			if m.renderer != nil {
+				theme := loadTheme()
+				var r *glamour.TermRenderer
+				if theme == "auto" {
+					r, _ = glamour.NewTermRenderer(
+						glamour.WithAutoStyle(),
+						glamour.WithWordWrap(msg.Width-4),
+					)
+				} else {
+					r, _ = glamour.NewTermRenderer(
+						glamour.WithStylePath(theme),
+						glamour.WithWordWrap(msg.Width-4),
+					)
+				}
+				m.renderer = r
+			}
+			m.progress.Width = msg.Width - 4
+			_, _, editorW, editorH := editorGeometry(msg.Width, msg.Height)
+			m.editor.SetWidth(editorW)
+			m.editor.SetHeight(editorH)
+			return m, nil
+
+		case tea.KeyMsg:
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.editor.Blur()
+				m.showEditor = false
+				m.editorPath = ""
+				return m, nil
+			case tea.KeyCtrlS:
+				content := m.editor.Value()
+				if m.editorPath != "" {
+					if err := os.WriteFile(m.editorPath, []byte(content), 0o644); err != nil {
+						m.err = err
+						return m, nil
+					}
+				}
+				if m.currentSlide >= 0 && m.currentSlide < len(m.slides) {
+					m.slides[m.currentSlide] = content
+					if len(m.revealConfigs) != len(m.slides) {
+						newConfigs := make([]revealConfig, len(m.slides))
+						copy(newConfigs, m.revealConfigs)
+						m.revealConfigs = newConfigs
+					}
+					cfg := analyzeReveal(content)
+					m.revealConfigs[m.currentSlide] = cfg
+					if cfg.totalItems() > 0 {
+						if m.revealProgress == nil {
+							m.revealProgress = make(map[int]int)
+						}
+						m.revealProgress[m.currentSlide] = clampRevealProgress(m.revealProgress[m.currentSlide], cfg.totalItems())
+					} else {
+						delete(m.revealProgress, m.currentSlide)
+					}
+				}
+				if m.currentSlide >= 0 && m.currentSlide < len(m.slidePaths) && m.editorPath != "" {
+					m.slidePaths[m.currentSlide] = m.editorPath
+				}
+				m.err = nil
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.editor, cmd = m.editor.Update(msg)
+			return m, cmd
+		case errMsg:
+			m.err = msg
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.editor, cmd = m.editor.Update(msg)
+			return m, cmd
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Update renderer word wrap based on terminal width
 		if m.renderer != nil {
 			theme := loadTheme()
 			var r *glamour.TermRenderer
 			if theme == "auto" {
 				r, _ = glamour.NewTermRenderer(
 					glamour.WithAutoStyle(),
-					glamour.WithWordWrap(msg.Width-4), // Leave some margin
+					glamour.WithWordWrap(msg.Width-4),
 				)
 			} else {
 				r, _ = glamour.NewTermRenderer(
 					glamour.WithStylePath(theme),
-					glamour.WithWordWrap(msg.Width-4), // Leave some margin
+					glamour.WithWordWrap(msg.Width-4),
 				)
 			}
 			m.renderer = r
 		}
-		// Update progress bar width
-		m.progress.Width = msg.Width - 4 // Leave some margin
+		m.progress.Width = msg.Width - 4
 		return m, nil
 
 	case slidesLoadedMsg:
 		m.slides = msg.slides
+		m.slidePaths = msg.paths
 		m.title = msg.title
 		m.author = msg.author
 		m.revealConfigs = msg.revealConfigs
@@ -232,7 +322,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				copy(newConfigs, m.revealConfigs)
 				m.revealConfigs = newConfigs
 			}
+			if len(m.slidePaths) != len(m.slides) {
+				newPaths := make([]string, len(m.slides))
+				copy(newPaths, m.slidePaths)
+				m.slidePaths = newPaths
+			}
 			m.revealConfigs[msg.slideIndex] = msg.config
+			if msg.path != "" {
+				m.slidePaths[msg.slideIndex] = msg.path
+			}
 			current, ok := m.revealProgress[msg.slideIndex]
 			total := msg.config.totalItems()
 			minVisible := 0
@@ -264,6 +362,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+
+		case "e":
+			if len(m.slides) == 0 || m.currentSlide < 0 || m.currentSlide >= len(m.slides) {
+				return m, nil
+			}
+			_, _, editorW, editorH := editorGeometry(m.width, m.height)
+			editor := textarea.New()
+			editor.SetValue(m.slides[m.currentSlide])
+			editor.Placeholder = "Edit slide markdown..."
+			editor.Focus()
+			editor.SetWidth(editorW)
+			editor.SetHeight(editorH)
+			m.editor = editor
+			if m.currentSlide >= 0 && m.currentSlide < len(m.slidePaths) {
+				m.editorPath = m.slidePaths[m.currentSlide]
+			} else {
+				m.editorPath = ""
+			}
+			m.showEditor = true
+			return m, textarea.Blink
 
 		case "r":
 			if len(m.slides) > 0 {
@@ -298,7 +416,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "right", "l":
 			if m.currentSlide < len(m.slides)-1 {
 				m.currentSlide++
-				// Update progress bar
 				percentage := float64(m.currentSlide+1) / float64(len(m.slides))
 				cmd := m.progress.SetPercent(percentage)
 				return m, cmd
@@ -308,7 +425,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "left", "h":
 			if m.currentSlide > 0 {
 				m.currentSlide--
-				// Update progress bar
 				percentage := float64(m.currentSlide+1) / float64(len(m.slides))
 				cmd := m.progress.SetPercent(percentage)
 				return m, cmd
@@ -316,7 +432,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-	// FrameMsg is sent when the progress bar wants to animate itself
 	case progress.FrameMsg:
 		progressModel, cmd := m.progress.Update(msg)
 		m.progress = progressModel.(progress.Model)
@@ -361,6 +476,70 @@ func adjustReveal(m *model, slideIndex, delta int) bool {
 	}
 	m.revealProgress[slideIndex] = next
 	return true
+}
+
+func clampRevealProgress(current, total int) int {
+	if total <= 0 {
+		return 0
+	}
+	if current < 1 {
+		return 1
+	}
+	if current > total {
+		return total
+	}
+	return current
+}
+
+func clampInt(value, min, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
+func editorGeometry(width, height int) (panelWidth, panelHeight, editorWidth, editorHeight int) {
+	const (
+		minPanelWidth  = 28
+		minPanelHeight = 10
+		panelHorizPad  = 4
+		panelVertPad   = 4
+	)
+
+	if width < minPanelWidth+2 {
+		width = minPanelWidth + 2
+	}
+	if height < minPanelHeight+2 {
+		height = minPanelHeight + 2
+	}
+
+	targetPanelWidth := int(math.Round(float64(width) * 0.7))
+	maxPanelWidth := width - 4
+	if maxPanelWidth < minPanelWidth {
+		maxPanelWidth = width - 2
+		if maxPanelWidth < minPanelWidth {
+			maxPanelWidth = width
+		}
+	}
+	panelWidth = clampInt(targetPanelWidth, minPanelWidth, maxPanelWidth)
+
+	targetPanelHeight := int(math.Round(float64(height) * 0.4))
+	maxPanelHeight := height - 12
+	if maxPanelHeight < minPanelHeight {
+		maxPanelHeight = height - 8
+		if maxPanelHeight < minPanelHeight {
+			maxPanelHeight = height - 4
+		}
+	}
+	panelHeight = clampInt(targetPanelHeight, minPanelHeight, maxPanelHeight)
+
+	editorWidth = clampInt(panelWidth-panelHorizPad, 12, panelWidth-2)
+	editorHeight = clampInt(panelHeight-panelVertPad, 6, panelHeight-2)
+
+	return panelWidth, panelHeight, editorWidth, editorHeight
 }
 
 func applyReveal(content string, cfg revealConfig, count int) string {
@@ -498,6 +677,46 @@ func isListItem(line string) bool {
 }
 
 func (m model) View() string {
+	if m.showEditor {
+		panelWidth, panelHeight, editorW, editorH := editorGeometry(m.width, m.height)
+		editorCopy := m.editor
+		editorCopy.SetWidth(editorW)
+		editorCopy.SetHeight(editorH)
+		editorView := editorCopy.View()
+		pathLabel := m.editorPath
+		if pathLabel == "" {
+			pathLabel = "unsaved slide"
+		} else {
+			pathLabel = filepath.Base(pathLabel)
+		}
+		helpLines := []string{pathLabel, "esc to close - ctrl+s to save"}
+		if m.err != nil {
+			helpLines = append(helpLines, fmt.Sprintf("error: %v", m.err))
+		}
+		helpText := lipgloss.NewStyle().Foreground(lipgloss.Color("#94A3B8")).Render(strings.Join(helpLines, "\n"))
+		body := lipgloss.JoinVertical(lipgloss.Left, editorView, helpText)
+		panelStyle := lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#7C3AED")).
+			Background(lipgloss.Color("#0F172A")).
+			Padding(1, 2).
+			Width(panelWidth).
+			Height(panelHeight)
+		panel := panelStyle.Render(body)
+
+		floating := lipgloss.Place(
+			m.height,
+			m.width,
+			lipgloss.Center,
+			lipgloss.Center,
+			panel,
+			lipgloss.WithWhitespaceChars(" "),
+			lipgloss.WithWhitespaceForeground(lipgloss.Color("#111827")),
+		)
+
+		return floating
+	}
+
 	if m.err != nil {
 		return fmt.Sprintf("Error: %v\n\nPress 'q' to quit.", m.err)
 	}
