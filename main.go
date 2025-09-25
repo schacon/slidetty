@@ -14,15 +14,17 @@ import (
 )
 
 type model struct {
-	slides       []string
-	currentSlide int
-	renderer     *glamour.TermRenderer
-	progress     progress.Model
-	width        int
-	height       int
-	title        string
-	author       string
-	err          error
+	slides         []string
+	currentSlide   int
+	renderer       *glamour.TermRenderer
+	progress       progress.Model
+	width          int
+	height         int
+	title          string
+	author         string
+	err            error
+	revealConfigs  []revealConfig
+	revealProgress map[int]int
 }
 
 type errMsg error
@@ -30,6 +32,16 @@ type errMsg error
 type slideReloadedMsg struct {
 	slideIndex int
 	content    string
+	config     revealConfig
+}
+
+type revealConfig struct {
+	directiveLines []int
+	items          [][]int
+}
+
+func (rc revealConfig) totalItems() int {
+	return len(rc.items)
 }
 
 func loadTheme() string {
@@ -62,12 +74,14 @@ func initialModel() model {
 	prog := progress.New(progress.WithDefaultGradient())
 
 	return model{
-		slides:       []string{},
-		currentSlide: 0,
-		renderer:     r,
-		progress:     prog,
-		title:        "",
-		author:       "",
+		slides:         []string{},
+		currentSlide:   0,
+		renderer:       r,
+		progress:       prog,
+		title:          "",
+		author:         "",
+		revealConfigs:  nil,
+		revealProgress: make(map[int]int),
 	}
 }
 
@@ -85,6 +99,7 @@ func loadSlides() tea.Msg {
 	var filenames []string
 	var title string
 	var author string
+	var configs []revealConfig
 
 	// Load title from _title.md if it exists
 	if titleContent, err := os.ReadFile("slides/_title.md"); err == nil {
@@ -112,10 +127,12 @@ func loadSlides() tea.Msg {
 		if err != nil {
 			return errMsg(err)
 		}
-		slides = append(slides, string(content))
+		slide := string(content)
+		slides = append(slides, slide)
+		configs = append(configs, analyzeReveal(slide))
 	}
 
-	return slidesLoadedMsg{slides: slides, title: title, author: author}
+	return slidesLoadedMsg{slides: slides, title: title, author: author, revealConfigs: configs}
 }
 
 func reloadSlide(slideIndex int) tea.Cmd {
@@ -148,14 +165,16 @@ func reloadSlide(slideIndex int) tea.Cmd {
 			return errMsg(err)
 		}
 
-		return slideReloadedMsg{slideIndex: slideIndex, content: string(content)}
+		slide := string(content)
+		return slideReloadedMsg{slideIndex: slideIndex, content: slide, config: analyzeReveal(slide)}
 	}
 }
 
 type slidesLoadedMsg struct {
-	slides []string
-	title  string
-	author string
+	slides        []string
+	title         string
+	author        string
+	revealConfigs []revealConfig
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -188,16 +207,52 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.slides = msg.slides
 		m.title = msg.title
 		m.author = msg.author
-		// Set initial progress percentage
-		if len(m.slides) > 0 {
-			percentage := float64(m.currentSlide+1) / float64(len(m.slides))
-			m.progress.SetPercent(percentage)
+		m.revealConfigs = msg.revealConfigs
+		m.revealProgress = make(map[int]int, len(msg.revealConfigs))
+		for idx, cfg := range msg.revealConfigs {
+			if cfg.totalItems() > 0 {
+				m.revealProgress[idx] = 1
+			}
 		}
+		if len(m.slides) == 0 {
+			return m, nil
+		}
+		if m.currentSlide >= len(m.slides) {
+			m.currentSlide = len(m.slides) - 1
+		}
+		percentage := float64(m.currentSlide+1) / float64(len(m.slides))
+		m.progress.SetPercent(percentage)
 		return m, nil
 
 	case slideReloadedMsg:
-		if msg.slideIndex == m.currentSlide && msg.slideIndex < len(m.slides) {
+		if msg.slideIndex >= 0 && msg.slideIndex < len(m.slides) {
 			m.slides[msg.slideIndex] = msg.content
+			if len(m.revealConfigs) != len(m.slides) {
+				newConfigs := make([]revealConfig, len(m.slides))
+				copy(newConfigs, m.revealConfigs)
+				m.revealConfigs = newConfigs
+			}
+			m.revealConfigs[msg.slideIndex] = msg.config
+			current, ok := m.revealProgress[msg.slideIndex]
+			total := msg.config.totalItems()
+			minVisible := 0
+			if total > 0 {
+				minVisible = 1
+			}
+			if !ok {
+				current = minVisible
+			}
+			if current < minVisible {
+				current = minVisible
+			}
+			if current > total {
+				current = total
+			}
+			if total == 0 {
+				delete(m.revealProgress, msg.slideIndex)
+			} else {
+				m.revealProgress[msg.slideIndex] = current
+			}
 		}
 		return m, nil
 
@@ -213,6 +268,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			if len(m.slides) > 0 {
 				return m, reloadSlide(m.currentSlide)
+			}
+			return m, nil
+
+		case "down", "j":
+			if adjustReveal(&m, m.currentSlide, 1) {
+				return m, nil
+			}
+			if m.currentSlide < len(m.slides)-1 {
+				m.currentSlide++
+				percentage := float64(m.currentSlide+1) / float64(len(m.slides))
+				cmd := m.progress.SetPercent(percentage)
+				return m, cmd
+			}
+			return m, nil
+
+		case "up", "k":
+			if adjustReveal(&m, m.currentSlide, -1) {
+				return m, nil
+			}
+			if m.currentSlide > 0 {
+				m.currentSlide--
+				percentage := float64(m.currentSlide+1) / float64(len(m.slides))
+				cmd := m.progress.SetPercent(percentage)
+				return m, cmd
 			}
 			return m, nil
 
@@ -247,6 +326,177 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func adjustReveal(m *model, slideIndex, delta int) bool {
+	if slideIndex < 0 || slideIndex >= len(m.revealConfigs) {
+		return false
+	}
+	cfg := m.revealConfigs[slideIndex]
+	total := cfg.totalItems()
+	if m.revealProgress == nil {
+		m.revealProgress = make(map[int]int)
+	}
+	current, ok := m.revealProgress[slideIndex]
+	minVisible := 0
+	if total > 0 {
+		minVisible = 1
+	}
+	if !ok {
+		current = minVisible
+		if total > 0 {
+			m.revealProgress[slideIndex] = current
+		}
+	}
+	next := current + delta
+	if next < minVisible {
+		next = minVisible
+	}
+	if next > total {
+		next = total
+	}
+	if next == current {
+		return false
+	}
+	if total == 0 {
+		return false
+	}
+	m.revealProgress[slideIndex] = next
+	return true
+}
+
+func applyReveal(content string, cfg revealConfig, count int) string {
+	total := cfg.totalItems()
+	if total == 0 && len(cfg.directiveLines) == 0 {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	hide := make(map[int]struct{}, len(cfg.directiveLines))
+	for _, idx := range cfg.directiveLines {
+		hide[idx] = struct{}{}
+	}
+	visible := count
+	if visible < 0 {
+		visible = 0
+	}
+	if total > 0 && visible == 0 {
+		visible = 1
+	}
+	if visible > len(cfg.items) {
+		visible = len(cfg.items)
+	}
+	for _, item := range cfg.items[visible:] {
+		for _, idx := range item {
+			hide[idx] = struct{}{}
+		}
+	}
+	filtered := make([]string, 0, len(lines)+1)
+	for i, line := range lines {
+		if _, hidden := hide[i]; hidden {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	if total > 0 && visible < len(cfg.items) {
+		nextIndices := cfg.items[visible]
+		if len(nextIndices) > 0 && nextIndices[0] < len(lines) {
+			filtered = append(filtered, ellipsisLine(lines[nextIndices[0]]))
+		} else {
+			filtered = append(filtered, "...")
+		}
+	}
+	return strings.Join(filtered, "\n")
+}
+
+func ellipsisLine(line string) string {
+	trimmed := strings.TrimLeft(line, " 	")
+	indent := line[:len(line)-len(trimmed)]
+	switch {
+	case strings.HasPrefix(trimmed, "- "), strings.HasPrefix(trimmed, "* "), strings.HasPrefix(trimmed, "+ "):
+		return indent + trimmed[:2] + "..."
+	default:
+		digits := 0
+		for digits < len(trimmed) && trimmed[digits] >= '0' && trimmed[digits] <= '9' {
+			digits++
+		}
+		if digits > 0 && digits < len(trimmed) && trimmed[digits] == '.' {
+			if digits+1 < len(trimmed) && trimmed[digits+1] == ' ' {
+				return indent + trimmed[:digits+2] + "..."
+			}
+		}
+	}
+	return indent + "..."
+}
+
+func analyzeReveal(content string) revealConfig {
+	lines := strings.Split(content, "\n")
+	var directive []int
+	var items [][]int
+
+	for i := 0; i < len(lines); {
+		if strings.TrimSpace(lines[i]) != ":reveal:" {
+			i++
+			continue
+		}
+		directive = append(directive, i)
+		i++
+		for i < len(lines) {
+			trimmed := strings.TrimSpace(lines[i])
+			if trimmed == "" {
+				i++
+				continue
+			}
+			if !isListItem(lines[i]) {
+				break
+			}
+			itemIndices := []int{i}
+			i++
+			for i < len(lines) {
+				line := lines[i]
+				trimmedLine := strings.TrimSpace(line)
+				if trimmedLine == "" {
+					itemIndices = append(itemIndices, i)
+					i++
+					break
+				}
+				if isListItem(line) {
+					break
+				}
+				if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "	") {
+					itemIndices = append(itemIndices, i)
+					i++
+					continue
+				}
+				break
+			}
+			items = append(items, itemIndices)
+		}
+	}
+
+	return revealConfig{directiveLines: directive, items: items}
+}
+
+func isListItem(line string) bool {
+	trimmed := strings.TrimLeft(line, " 	")
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") || strings.HasPrefix(trimmed, "+ ") {
+		return true
+	}
+	idx := 0
+	for idx < len(trimmed) && trimmed[idx] >= '0' && trimmed[idx] <= '9' {
+		idx++
+	}
+	if idx == 0 {
+		return false
+	}
+	if idx < len(trimmed) && trimmed[idx] == '.' {
+		if idx+1 < len(trimmed) && trimmed[idx+1] == ' ' {
+			return true
+		}
+	}
+	return false
+}
+
 func (m model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("Error: %v\n\nPress 'q' to quit.", m.err)
@@ -257,7 +507,11 @@ func (m model) View() string {
 	}
 
 	// Render current slide with glamour
-	rendered, err := m.renderer.Render(m.slides[m.currentSlide])
+	slideContent := m.slides[m.currentSlide]
+	if m.currentSlide < len(m.revealConfigs) {
+		slideContent = applyReveal(slideContent, m.revealConfigs[m.currentSlide], m.revealProgress[m.currentSlide])
+	}
+	rendered, err := m.renderer.Render(slideContent)
 	if err != nil {
 		rendered = "Error rendering markdown: " + err.Error()
 	}
