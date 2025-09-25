@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -212,9 +211,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.renderer = r
 			}
 			m.progress.Width = msg.Width - 4
-			_, _, editorW, editorH := editorGeometry(msg.Width, msg.Height)
-			m.editor.SetWidth(editorW)
-			m.editor.SetHeight(editorH)
+			m.editor.SetWidth(msg.Width)
+			m.editor.SetHeight(msg.Height - 3)
 			return m, nil
 
 		case tea.KeyMsg:
@@ -253,8 +251,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.currentSlide >= 0 && m.currentSlide < len(m.slidePaths) && m.editorPath != "" {
 					m.slidePaths[m.currentSlide] = m.editorPath
 				}
+				m.editor.Blur()
+				m.showEditor = false
+				m.editorPath = ""
 				m.err = nil
-				return m, nil
+				return m, reloadSlide(m.currentSlide)
 			}
 			var cmd tea.Cmd
 			m.editor, cmd = m.editor.Update(msg)
@@ -367,13 +368,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.slides) == 0 || m.currentSlide < 0 || m.currentSlide >= len(m.slides) {
 				return m, nil
 			}
-			_, _, editorW, editorH := editorGeometry(m.width, m.height)
 			editor := textarea.New()
 			editor.SetValue(m.slides[m.currentSlide])
 			editor.Placeholder = "Edit slide markdown..."
 			editor.Focus()
-			editor.SetWidth(editorW)
-			editor.SetHeight(editorH)
+			editor.SetWidth(m.width)
+			editor.SetHeight(m.height - 3)
 			m.editor = editor
 			if m.currentSlide >= 0 && m.currentSlide < len(m.slidePaths) {
 				m.editorPath = m.slidePaths[m.currentSlide]
@@ -501,46 +501,6 @@ func clampInt(value, min, max int) int {
 	return value
 }
 
-func editorGeometry(width, height int) (panelWidth, panelHeight, editorWidth, editorHeight int) {
-	const (
-		minPanelWidth  = 28
-		minPanelHeight = 10
-		panelHorizPad  = 4
-		panelVertPad   = 4
-	)
-
-	if width < minPanelWidth+2 {
-		width = minPanelWidth + 2
-	}
-	if height < minPanelHeight+2 {
-		height = minPanelHeight + 2
-	}
-
-	targetPanelWidth := int(math.Round(float64(width) * 0.7))
-	maxPanelWidth := width - 4
-	if maxPanelWidth < minPanelWidth {
-		maxPanelWidth = width - 2
-		if maxPanelWidth < minPanelWidth {
-			maxPanelWidth = width
-		}
-	}
-	panelWidth = clampInt(targetPanelWidth, minPanelWidth, maxPanelWidth)
-
-	targetPanelHeight := int(math.Round(float64(height) * 0.4))
-	maxPanelHeight := height - 12
-	if maxPanelHeight < minPanelHeight {
-		maxPanelHeight = height - 8
-		if maxPanelHeight < minPanelHeight {
-			maxPanelHeight = height - 4
-		}
-	}
-	panelHeight = clampInt(targetPanelHeight, minPanelHeight, maxPanelHeight)
-
-	editorWidth = clampInt(panelWidth-panelHorizPad, 12, panelWidth-2)
-	editorHeight = clampInt(panelHeight-panelVertPad, 6, panelHeight-2)
-
-	return panelWidth, panelHeight, editorWidth, editorHeight
-}
 
 func applyReveal(content string, cfg revealConfig, count int) string {
 	total := cfg.totalItems()
@@ -678,43 +638,35 @@ func isListItem(line string) bool {
 
 func (m model) View() string {
 	if m.showEditor {
-		panelWidth, panelHeight, editorW, editorH := editorGeometry(m.width, m.height)
-		editorCopy := m.editor
-		editorCopy.SetWidth(editorW)
-		editorCopy.SetHeight(editorH)
-		editorView := editorCopy.View()
+		editorView := m.editor.View()
+
 		pathLabel := m.editorPath
 		if pathLabel == "" {
 			pathLabel = "unsaved slide"
 		} else {
 			pathLabel = filepath.Base(pathLabel)
 		}
-		helpLines := []string{pathLabel, "esc to close - ctrl+s to save"}
+
+		helpLines := []string{pathLabel, "esc to close - ctrl+s to save & exit"}
 		if m.err != nil {
 			helpLines = append(helpLines, fmt.Sprintf("error: %v", m.err))
 		}
-		helpText := lipgloss.NewStyle().Foreground(lipgloss.Color("#94A3B8")).Render(strings.Join(helpLines, "\n"))
-		body := lipgloss.JoinVertical(lipgloss.Left, editorView, helpText)
-		panelStyle := lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("#7C3AED")).
-			Background(lipgloss.Color("#0F172A")).
-			Padding(1, 2).
-			Width(panelWidth).
-			Height(panelHeight)
-		panel := panelStyle.Render(body)
 
-		floating := lipgloss.Place(
-			m.height,
-			m.width,
-			lipgloss.Center,
-			lipgloss.Center,
-			panel,
-			lipgloss.WithWhitespaceChars(" "),
-			lipgloss.WithWhitespaceForeground(lipgloss.Color("#111827")),
-		)
+		helpText := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#94A3B8")).
+			Background(lipgloss.Color("#000000")).
+			Width(m.width).
+			Align(lipgloss.Left).
+			Render(strings.Join(helpLines, " | "))
 
-		return floating
+		statusBar := lipgloss.NewStyle().
+			Background(lipgloss.Color("#1E3A8A")).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Width(m.width).
+			Padding(0, 1).
+			Render("EDIT MODE")
+
+		return lipgloss.JoinVertical(lipgloss.Left, statusBar, editorView, helpText)
 	}
 
 	if m.err != nil {
