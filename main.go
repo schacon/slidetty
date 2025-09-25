@@ -20,6 +20,7 @@ type model struct {
 	progress     progress.Model
 	width        int
 	height       int
+	title        string
 	err          error
 }
 
@@ -40,6 +41,7 @@ func initialModel() model {
 		currentSlide: 0,
 		renderer:     r,
 		progress:     prog,
+		title:        "",
 	}
 }
 
@@ -55,10 +57,16 @@ func loadSlides() tea.Msg {
 
 	var slides []string
 	var filenames []string
+	var title string
 
-	// Collect markdown files
+	// Load title from _title.md if it exists
+	if titleContent, err := os.ReadFile("slides/_title.md"); err == nil {
+		title = strings.TrimSpace(string(titleContent))
+	}
+
+	// Collect markdown files (excluding files starting with underscore)
 	for _, file := range files {
-		if filepath.Ext(file.Name()) == ".md" {
+		if filepath.Ext(file.Name()) == ".md" && !strings.HasPrefix(file.Name(), "_") {
 			filenames = append(filenames, file.Name())
 		}
 	}
@@ -75,11 +83,12 @@ func loadSlides() tea.Msg {
 		slides = append(slides, string(content))
 	}
 
-	return slidesLoadedMsg{slides: slides}
+	return slidesLoadedMsg{slides: slides, title: title}
 }
 
 type slidesLoadedMsg struct {
 	slides []string
+	title  string
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -101,6 +110,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case slidesLoadedMsg:
 		m.slides = msg.slides
+		m.title = msg.title
 		// Set initial progress percentage
 		if len(m.slides) > 0 {
 			percentage := float64(m.currentSlide+1) / float64(len(m.slides))
@@ -180,16 +190,16 @@ func (m model) View() string {
 		content += padding
 	}
 
-	// Calculate percentage
-	percentage := float64(m.currentSlide+1) / float64(len(m.slides))
-
 	// Get the animated gradient progress bar
 	progressBar := m.progress.View()
 
 	// Create status line
 	slideInfo := fmt.Sprintf("Slide %d/%d", m.currentSlide+1, len(m.slides))
-	percentageStr := fmt.Sprintf("%.0f%%", percentage*100)
-	help := "← → navigate • q quit"
+
+	titleText := m.title
+	if titleText == "" {
+		titleText = "Slidetty"
+	}
 
 	statusStyle := lipgloss.NewStyle().
 		Width(m.width).
@@ -199,40 +209,35 @@ func (m model) View() string {
 
 	// Create status content with proper alignment
 	statusLeft := slideInfo
-	statusCenter := percentageStr
-	statusRight := help
+	statusRight := titleText
 
 	// Calculate available width (account for padding)
 	availableWidth := m.width - 4 // Account for padding (2 on each side)
-	totalTextWidth := len(statusLeft) + len(statusCenter) + len(statusRight)
+	totalTextWidth := len(statusLeft) + len(statusRight)
 
-	// If text is too long, truncate the help text
+	// If text is too long, truncate the title
 	if totalTextWidth > availableWidth {
-		maxHelpWidth := availableWidth - len(statusLeft) - len(statusCenter) - 4 // Reserve 4 spaces for spacing
-		if maxHelpWidth < 10 {
-			statusRight = "q quit"
-		} else if maxHelpWidth < len(statusRight) {
-			statusRight = statusRight[:maxHelpWidth-3] + "..."
+		maxTitleWidth := availableWidth - len(statusLeft) - 4 // Reserve 4 spaces for spacing
+		if maxTitleWidth < 10 {
+			statusRight = "Slidetty"
+		} else if maxTitleWidth < len(statusRight) {
+			statusRight = statusRight[:maxTitleWidth-3] + "..."
 		}
 	}
 
 	// Recalculate after potential truncation
-	totalTextWidth = len(statusLeft) + len(statusCenter) + len(statusRight)
+	totalTextWidth = len(statusLeft) + len(statusRight)
 	remainingSpace := availableWidth - totalTextWidth
 
 	var statusContent string
 	if remainingSpace > 0 {
-		leftSpacing := remainingSpace / 2
-		rightSpacing := remainingSpace - leftSpacing
-		statusContent = fmt.Sprintf("%s%s%s%s%s",
+		statusContent = fmt.Sprintf("%s%s%s",
 			statusLeft,
-			strings.Repeat(" ", leftSpacing+1), // Add 1 for minimum spacing
-			statusCenter,
-			strings.Repeat(" ", rightSpacing+1), // Add 1 for minimum spacing
+			strings.Repeat(" ", remainingSpace+2), // Add 2 for spacing
 			statusRight)
 	} else {
 		// Minimal spacing if very tight
-		statusContent = fmt.Sprintf("%s %s %s", statusLeft, statusCenter, statusRight)
+		statusContent = fmt.Sprintf("%s %s", statusLeft, statusRight)
 	}
 
 	statusLine := statusStyle.Render(statusContent)
