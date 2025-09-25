@@ -1,9 +1,11 @@
 # Splitting Commits
 
-new and describe
+## create an empty commit and rub stuff into it
 
-<Terminal
-  title="but new"
-  startingCommand="but status"
-  preCommands={["but new", "but describe"]}
-/>
+```json
+{
+  "but new",
+  "but describe"
+}
+```
+```

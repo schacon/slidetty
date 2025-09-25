@@ -1,3 +1,10 @@
 # JSON
 
-<Terminal title="but --json" startingCommand="but -j log" />
+## Everything has a JSON output mode for easy and dependable scripting
+
+```json
+{
+  "but --json",
+  "but -j log"
+}
+```

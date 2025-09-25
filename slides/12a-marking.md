@@ -1,9 +1,15 @@
 # Marking
 
-JJ style
+## JJ style workflows
 
-<Terminal
-  title="but mark"
-  startingCommand="but status"
-  preCommands={["but mark", "but new -m", "but restore f3eebf964569"]}
-/>
+- new and mark
+- mark deeper commits
+- mark a branch
+
+```json
+{
+  "but mark",
+  "but new -m",
+  "but restore f3eebf964569"
+}
+```
