@@ -237,7 +237,7 @@ func (m model) View() string {
 
 	statusLine := statusStyle.Render(statusContent)
 
-	return content + "\n" + progressBar + statusLine
+	return content + "\n" + statusLine + "\n" + progressBar
 }
 
 func main() {

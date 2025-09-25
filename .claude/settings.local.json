@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(go mod init:*)",
-      "Bash(go get:*)"
+      "Bash(go get:*)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []
