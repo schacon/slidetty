@@ -1,5 +1,6 @@
 # but branch
 
-You can make either parallel or stacked branches
+## You can make either parallel or stacked branches
 
-<Terminal title="but branch" startingCommand="but status" />
+- `but branch new`
+

@@ -27,13 +27,36 @@ type model struct {
 
 type errMsg error
 
+type slideReloadedMsg struct {
+	slideIndex int
+	content    string
+}
+
+func loadTheme() string {
+	if themeContent, err := os.ReadFile("slides/_theme.md"); err == nil {
+		theme := strings.TrimSpace(string(themeContent))
+		if theme != "" {
+			return theme
+		}
+	}
+	return "auto" // fallback to auto if no theme file or empty
+}
+
 func initialModel() model {
-	// Initialize glamour renderer with dark theme
-	// Note: WithAutoStyle() can be slow on some terminals due to capability detection
-	r, _ := glamour.NewTermRenderer(
-		glamour.WithAutoStyle(),
-		glamour.WithWordWrap(80),
-	)
+	// Initialize glamour renderer with theme from _theme.md
+	theme := loadTheme()
+	var r *glamour.TermRenderer
+	if theme == "auto" {
+		r, _ = glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(80),
+		)
+	} else {
+		r, _ = glamour.NewTermRenderer(
+			glamour.WithStylePath(theme),
+			glamour.WithWordWrap(80),
+		)
+	}
 
 	// Initialize progress bar with gradient
 	prog := progress.New(progress.WithDefaultGradient())
@@ -95,6 +118,40 @@ func loadSlides() tea.Msg {
 	return slidesLoadedMsg{slides: slides, title: title, author: author}
 }
 
+func reloadSlide(slideIndex int) tea.Cmd {
+	return func() tea.Msg {
+		files, err := os.ReadDir("slides")
+		if err != nil {
+			return errMsg(err)
+		}
+
+		var filenames []string
+
+		// Collect markdown files (excluding files starting with underscore)
+		for _, file := range files {
+			if filepath.Ext(file.Name()) == ".md" && !strings.HasPrefix(file.Name(), "_") {
+				filenames = append(filenames, file.Name())
+			}
+		}
+
+		// Sort filenames to ensure consistent order
+		sort.Strings(filenames)
+
+		// Check if slideIndex is valid
+		if slideIndex < 0 || slideIndex >= len(filenames) {
+			return errMsg(fmt.Errorf("invalid slide index: %d", slideIndex))
+		}
+
+		// Read the specific slide content
+		content, err := os.ReadFile(filepath.Join("slides", filenames[slideIndex]))
+		if err != nil {
+			return errMsg(err)
+		}
+
+		return slideReloadedMsg{slideIndex: slideIndex, content: string(content)}
+	}
+}
+
 type slidesLoadedMsg struct {
 	slides []string
 	title  string
@@ -108,10 +165,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		// Update renderer word wrap based on terminal width
 		if m.renderer != nil {
-			r, _ := glamour.NewTermRenderer(
-				glamour.WithAutoStyle(),
-				glamour.WithWordWrap(msg.Width-4), // Leave some margin
-			)
+			theme := loadTheme()
+			var r *glamour.TermRenderer
+			if theme == "auto" {
+				r, _ = glamour.NewTermRenderer(
+					glamour.WithAutoStyle(),
+					glamour.WithWordWrap(msg.Width-4), // Leave some margin
+				)
+			} else {
+				r, _ = glamour.NewTermRenderer(
+					glamour.WithStylePath(theme),
+					glamour.WithWordWrap(msg.Width-4), // Leave some margin
+				)
+			}
 			m.renderer = r
 		}
 		// Update progress bar width
@@ -129,6 +195,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case slideReloadedMsg:
+		if msg.slideIndex == m.currentSlide && msg.slideIndex < len(m.slides) {
+			m.slides[msg.slideIndex] = msg.content
+		}
+		return m, nil
+
 	case errMsg:
 		m.err = msg
 		return m, nil
@@ -137,6 +209,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "ctrl+c", "q":
 			return m, tea.Quit
+
+		case "r":
+			if len(m.slides) > 0 {
+				return m, reloadSlide(m.currentSlide)
+			}
+			return m, nil
 
 		case "right", "l":
 			if m.currentSlide < len(m.slides)-1 {

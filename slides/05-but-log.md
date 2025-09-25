@@ -1,9 +1,7 @@
 # but log
 
-Pretty cool shortlog
+## Pretty cool shortlog
 
-<Terminal
-  title="but log"
-  startingCommand="but log"
-  preCommands={["but log", "but log -s"]}
-/>
+- `but log`
+- `but log -s`
+

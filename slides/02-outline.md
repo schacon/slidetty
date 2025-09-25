@@ -1,7 +1,3 @@
----
-title: What will we cover
----
-
 # Overview
 
 - Config

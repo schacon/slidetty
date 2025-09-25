@@ -1,9 +1,15 @@
 # Rubbing
 
-assign, unassign, amend, squash, uncommit, move commit, move file
+:reveal:
+- assign => `ufile + branch`
+- unassign => `file + 00`
+- amend => `ufile + commit`
+- squash => `commit + commit`
+- uncommit => `commit + 00`
+- move commit => `commit + branch`
+- move file => `file + commit`
 
-<Terminal
-  title="rubbing"
-  startingCommand="but st"
-  preCommands={["but restore f3eebf964569"]}
-/>
+```json
+{"but restore f3eebf964569"}
+```
+

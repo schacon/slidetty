@@ -1,9 +1,15 @@
 # but status
 
-showing your active branches, basic commit info and uncommitted work
+## Shows your:
 
-<Terminal
-  title="but status"
-  startingCommand="but status"
-  preCommands={["but status", "but status -f", "but restore f3eebf964569"]}
-/>
+- active branches
+- basic commit info
+- uncommitted work
+
+```json
+{ 
+  "but status", 
+  "but status -f", 
+  "but restore f3eebf964569" 
+}
+```
