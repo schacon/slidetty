@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/progress"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
@@ -16,6 +17,7 @@ type model struct {
 	slides       []string
 	currentSlide int
 	renderer     *glamour.TermRenderer
+	progress     progress.Model
 	width        int
 	height       int
 	err          error
@@ -30,10 +32,14 @@ func initialModel() model {
 		glamour.WithWordWrap(80),
 	)
 
+	// Initialize progress bar with gradient
+	prog := progress.New(progress.WithDefaultGradient())
+
 	return model{
 		slides:       []string{},
 		currentSlide: 0,
 		renderer:     r,
+		progress:     prog,
 	}
 }
 
@@ -89,10 +95,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			)
 			m.renderer = r
 		}
+		// Update progress bar width
+		m.progress.Width = msg.Width - 4 // Leave some margin
 		return m, nil
 
 	case slidesLoadedMsg:
 		m.slides = msg.slides
+		// Set initial progress percentage
+		if len(m.slides) > 0 {
+			percentage := float64(m.currentSlide+1) / float64(len(m.slides))
+			m.progress.SetPercent(percentage)
+		}
 		return m, nil
 
 	case errMsg:
@@ -107,15 +120,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "right", "l":
 			if m.currentSlide < len(m.slides)-1 {
 				m.currentSlide++
+				// Update progress bar
+				percentage := float64(m.currentSlide+1) / float64(len(m.slides))
+				cmd := m.progress.SetPercent(percentage)
+				return m, cmd
 			}
 			return m, nil
 
 		case "left", "h":
 			if m.currentSlide > 0 {
 				m.currentSlide--
+				// Update progress bar
+				percentage := float64(m.currentSlide+1) / float64(len(m.slides))
+				cmd := m.progress.SetPercent(percentage)
+				return m, cmd
 			}
 			return m, nil
 		}
+
+	// FrameMsg is sent when the progress bar wants to animate itself
+	case progress.FrameMsg:
+		progressModel, cmd := m.progress.Update(msg)
+		m.progress = progressModel.(progress.Model)
+		return m, cmd
 	}
 
 	return m, nil
@@ -156,23 +183,8 @@ func (m model) View() string {
 	// Calculate percentage
 	percentage := float64(m.currentSlide+1) / float64(len(m.slides))
 
-	// Create filled and empty parts of progress bar
-	filledWidth := int(float64(m.width) * percentage)
-	if filledWidth > m.width {
-		filledWidth = m.width
-	}
-
-	progressBarFilled := lipgloss.NewStyle().
-		Background(lipgloss.Color("39")). // Bright blue
-		Width(filledWidth)
-
-	progressBarEmpty := lipgloss.NewStyle().
-		Background(lipgloss.Color("240")). // Dark gray
-		Width(m.width - filledWidth)
-
-	progressBar := lipgloss.JoinHorizontal(lipgloss.Left,
-		progressBarFilled.Render(strings.Repeat(" ", filledWidth)),
-		progressBarEmpty.Render(strings.Repeat(" ", m.width-filledWidth)))
+	// Get the animated gradient progress bar
+	progressBar := m.progress.View()
 
 	// Create status line
 	slideInfo := fmt.Sprintf("Slide %d/%d", m.currentSlide+1, len(m.slides))
@@ -190,22 +202,38 @@ func (m model) View() string {
 	statusCenter := percentageStr
 	statusRight := help
 
-	// Calculate spacing
+	// Calculate available width (account for padding)
+	availableWidth := m.width - 4 // Account for padding (2 on each side)
 	totalTextWidth := len(statusLeft) + len(statusCenter) + len(statusRight)
-	availableSpace := m.width - 4 - totalTextWidth // Account for padding
-	if availableSpace < 0 {
-		availableSpace = 0
+
+	// If text is too long, truncate the help text
+	if totalTextWidth > availableWidth {
+		maxHelpWidth := availableWidth - len(statusLeft) - len(statusCenter) - 4 // Reserve 4 spaces for spacing
+		if maxHelpWidth < 10 {
+			statusRight = "q quit"
+		} else if maxHelpWidth < len(statusRight) {
+			statusRight = statusRight[:maxHelpWidth-3] + "..."
+		}
 	}
 
-	leftSpacing := availableSpace / 2
-	rightSpacing := availableSpace - leftSpacing
+	// Recalculate after potential truncation
+	totalTextWidth = len(statusLeft) + len(statusCenter) + len(statusRight)
+	remainingSpace := availableWidth - totalTextWidth
 
-	statusContent := fmt.Sprintf("%s%s%s%s%s",
-		statusLeft,
-		strings.Repeat(" ", leftSpacing),
-		statusCenter,
-		strings.Repeat(" ", rightSpacing),
-		statusRight)
+	var statusContent string
+	if remainingSpace > 0 {
+		leftSpacing := remainingSpace / 2
+		rightSpacing := remainingSpace - leftSpacing
+		statusContent = fmt.Sprintf("%s%s%s%s%s",
+			statusLeft,
+			strings.Repeat(" ", leftSpacing+1), // Add 1 for minimum spacing
+			statusCenter,
+			strings.Repeat(" ", rightSpacing+1), // Add 1 for minimum spacing
+			statusRight)
+	} else {
+		// Minimal spacing if very tight
+		statusContent = fmt.Sprintf("%s %s %s", statusLeft, statusCenter, statusRight)
+	}
 
 	statusLine := statusStyle.Render(statusContent)
 
