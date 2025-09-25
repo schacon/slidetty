@@ -1,6 +1,6 @@
 # Overview
 
-- Config
+:reveal:
 - Status (status, log)
 - Branching
 - Committing
@@ -8,4 +8,3 @@
 - Marking
 - Oplog (undo, revert, oplog)
 - JSON
-- Future work

@@ -8,8 +8,3 @@
 - uncommit => `commit + 00`
 - move commit => `commit + branch`
 - move file => `file + commit`
-
-```json
-{"but restore f3eebf964569"}
-```
-
