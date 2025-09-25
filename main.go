@@ -203,7 +203,7 @@ func (m model) View() string {
 
 	statusStyle := lipgloss.NewStyle().
 		Width(m.width).
-		Background(lipgloss.Color("240")).
+		Background(lipgloss.Color("#000080")).
 		Foreground(lipgloss.Color("15")).
 		Padding(0, 1)
 
