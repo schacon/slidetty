@@ -136,8 +136,8 @@ func (m model) View() string {
 		rendered = "Error rendering markdown: " + err.Error()
 	}
 
-	// Calculate available height for content (reserve 1 line for bottom bar)
-	contentHeight := m.height - 1
+	// Calculate available height for content (reserve 2 lines for bottom bar)
+	contentHeight := m.height - 2
 
 	// Split rendered content into lines and fit to available height
 	lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
@@ -153,48 +153,63 @@ func (m model) View() string {
 		content += padding
 	}
 
-	// Create bottom bar styles
-	bottomBarStyle := lipgloss.NewStyle().
+	// Calculate percentage
+	percentage := float64(m.currentSlide+1) / float64(len(m.slides))
+
+	// Create filled and empty parts of progress bar
+	filledWidth := int(float64(m.width) * percentage)
+	if filledWidth > m.width {
+		filledWidth = m.width
+	}
+
+	progressBarFilled := lipgloss.NewStyle().
+		Background(lipgloss.Color("39")). // Bright blue
+		Width(filledWidth)
+
+	progressBarEmpty := lipgloss.NewStyle().
+		Background(lipgloss.Color("240")). // Dark gray
+		Width(m.width - filledWidth)
+
+	progressBar := lipgloss.JoinHorizontal(lipgloss.Left,
+		progressBarFilled.Render(strings.Repeat(" ", filledWidth)),
+		progressBarEmpty.Render(strings.Repeat(" ", m.width-filledWidth)))
+
+	// Create status line
+	slideInfo := fmt.Sprintf("Slide %d/%d", m.currentSlide+1, len(m.slides))
+	percentageStr := fmt.Sprintf("%.0f%%", percentage*100)
+	help := "← → navigate • q quit"
+
+	statusStyle := lipgloss.NewStyle().
 		Width(m.width).
 		Background(lipgloss.Color("240")).
 		Foreground(lipgloss.Color("15")).
 		Padding(0, 1)
 
-	// Calculate percentage
-	percentage := float64(m.currentSlide+1) / float64(len(m.slides)) * 100
+	// Create status content with proper alignment
+	statusLeft := slideInfo
+	statusCenter := percentageStr
+	statusRight := help
 
-	// Create progress bar
-	barWidth := m.width - 30 // Reserve space for text
-	if barWidth < 0 {
-		barWidth = 10
-	}
-	filled := int(float64(barWidth) * percentage / 100)
-	if filled > barWidth {
-		filled = barWidth
-	}
-
-	progressBar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
-
-	// Format bottom bar content
-	slideInfo := fmt.Sprintf("Slide %d/%d", m.currentSlide+1, len(m.slides))
-	percentageStr := fmt.Sprintf("%.0f%%", percentage)
-	help := "← → navigate • q quit"
-
-	// Layout bottom bar with proper spacing
-	bottomContent := fmt.Sprintf("%s  %s  %s  %s",
-		slideInfo,
-		progressBar,
-		percentageStr,
-		help)
-
-	// Truncate if too long
-	if len(bottomContent) > m.width {
-		bottomContent = bottomContent[:m.width]
+	// Calculate spacing
+	totalTextWidth := len(statusLeft) + len(statusCenter) + len(statusRight)
+	availableSpace := m.width - 4 - totalTextWidth // Account for padding
+	if availableSpace < 0 {
+		availableSpace = 0
 	}
 
-	bottomBar := bottomBarStyle.Render(bottomContent)
+	leftSpacing := availableSpace / 2
+	rightSpacing := availableSpace - leftSpacing
 
-	return content + bottomBar
+	statusContent := fmt.Sprintf("%s%s%s%s%s",
+		statusLeft,
+		strings.Repeat(" ", leftSpacing),
+		statusCenter,
+		strings.Repeat(" ", rightSpacing),
+		statusRight)
+
+	statusLine := statusStyle.Render(statusContent)
+
+	return content + "\n" + progressBar + statusLine
 }
 
 func main() {
