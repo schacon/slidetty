@@ -4,7 +4,8 @@
       "Bash(go mod init:*)",
       "Bash(go get:*)",
       "WebSearch",
-      "Bash(go build:*)"
+      "Bash(go build:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

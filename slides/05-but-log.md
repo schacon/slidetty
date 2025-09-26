@@ -2,6 +2,8 @@
 
 ## Pretty cool shortlog
 
-- `but log`
-- `but log -s`
+```commands
+but log
+but log -s
+```
 

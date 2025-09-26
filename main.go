@@ -3,9 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/textarea"
@@ -30,20 +33,30 @@ type model struct {
 	showEditor     bool
 	editor         textarea.Model
 	editorPath     string
+	commandBlocks  [][]string // commands for each slide
+	notification   string
+	notificationTimer int
 }
 
 type errMsg error
 
+type tickMsg struct{}
+
 type slideReloadedMsg struct {
-	slideIndex int
-	content    string
-	config     revealConfig
-	path       string
+	slideIndex    int
+	content       string
+	config        revealConfig
+	path          string
+	commandBlock  []string
 }
 
 type revealConfig struct {
 	directiveLines []int
 	items          [][]int
+}
+
+type commandBlock struct {
+	commands []string
 }
 
 func (rc revealConfig) totalItems() int {
@@ -89,6 +102,7 @@ func initialModel() model {
 		author:         "",
 		revealConfigs:  nil,
 		revealProgress: make(map[int]int),
+		commandBlocks:  [][]string{},
 	}
 }
 
@@ -108,6 +122,7 @@ func loadSlides() tea.Msg {
 	var author string
 	var configs []revealConfig
 	var paths []string
+	var commandBlocks [][]string
 
 	// Load title from _title.md if it exists
 	if titleContent, err := os.ReadFile("slides/_title.md"); err == nil {
@@ -140,9 +155,10 @@ func loadSlides() tea.Msg {
 		slides = append(slides, slide)
 		configs = append(configs, analyzeReveal(slide))
 		paths = append(paths, fullPath)
+		commandBlocks = append(commandBlocks, parseCommandBlocks(slide))
 	}
 
-	return slidesLoadedMsg{slides: slides, title: title, author: author, revealConfigs: configs, paths: paths}
+	return slidesLoadedMsg{slides: slides, title: title, author: author, revealConfigs: configs, paths: paths, commandBlocks: commandBlocks}
 }
 
 func reloadSlide(slideIndex int) tea.Cmd {
@@ -176,7 +192,7 @@ func reloadSlide(slideIndex int) tea.Cmd {
 		}
 
 		slide := string(content)
-		return slideReloadedMsg{slideIndex: slideIndex, content: slide, config: analyzeReveal(slide), path: filepath.Join("slides", filenames[slideIndex])}
+		return slideReloadedMsg{slideIndex: slideIndex, content: slide, config: analyzeReveal(slide), path: filepath.Join("slides", filenames[slideIndex]), commandBlock: parseCommandBlocks(slide)}
 	}
 }
 
@@ -186,6 +202,7 @@ type slidesLoadedMsg struct {
 	title         string
 	author        string
 	revealConfigs []revealConfig
+	commandBlocks [][]string
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -299,6 +316,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.title = msg.title
 		m.author = msg.author
 		m.revealConfigs = msg.revealConfigs
+		m.commandBlocks = msg.commandBlocks
 		m.revealProgress = make(map[int]int, len(msg.revealConfigs))
 		for idx, cfg := range msg.revealConfigs {
 			if cfg.totalItems() > 0 {
@@ -328,7 +346,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				copy(newPaths, m.slidePaths)
 				m.slidePaths = newPaths
 			}
+			if len(m.commandBlocks) != len(m.slides) {
+				newCommandBlocks := make([][]string, len(m.slides))
+				copy(newCommandBlocks, m.commandBlocks)
+				m.commandBlocks = newCommandBlocks
+			}
 			m.revealConfigs[msg.slideIndex] = msg.config
+			m.commandBlocks[msg.slideIndex] = msg.commandBlock
 			if msg.path != "" {
 				m.slidePaths[msg.slideIndex] = msg.path
 			}
@@ -389,6 +413,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case "d":
+			// Handle first command hotkey
+			if m.currentSlide < len(m.commandBlocks) && len(m.commandBlocks[m.currentSlide]) > 0 {
+				commands := m.commandBlocks[m.currentSlide]
+				if len(commands) > 0 {
+					if err := copyToClipboard(commands[0]); err != nil {
+						m.notification = fmt.Sprintf("Copy error: %v", err)
+					} else {
+						m.notification = fmt.Sprintf("Copied: %s", commands[0])
+					}
+					m.notificationTimer = 3
+					return m, doTick()
+				}
+			}
+			return m, nil
+
 		case "down", "j":
 			if adjustReveal(&m, m.currentSlide, 1) {
 				return m, nil
@@ -430,12 +470,46 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			return m, nil
+
+		case "f", "g", "t", "y", "u", "i", "o", "p", "z":
+			// Handle command hotkeys (only if current slide has commands)
+			if m.currentSlide < len(m.commandBlocks) && len(m.commandBlocks[m.currentSlide]) > 0 {
+				commands := m.commandBlocks[m.currentSlide]
+				// Map keys to indices (d=0 is handled above, start from f=1)
+				keyMap := map[string]int{
+					"f": 1, "g": 2, "t": 3, "y": 4,
+					"u": 5, "i": 6, "o": 7, "p": 8, "z": 9,
+				}
+
+				if cmdNum, exists := keyMap[msg.String()]; exists && cmdNum < len(commands) {
+					if err := copyToClipboard(commands[cmdNum]); err != nil {
+						m.notification = fmt.Sprintf("Copy error: %v", err)
+					} else {
+						// Set success notification
+						m.notification = fmt.Sprintf("Copied: %s", commands[cmdNum])
+					}
+					m.notificationTimer = 3 // Show for 3 seconds
+					return m, doTick()
+				}
+			}
+			return m, nil
 		}
 
 	case progress.FrameMsg:
 		progressModel, cmd := m.progress.Update(msg)
 		m.progress = progressModel.(progress.Model)
 		return m, cmd
+
+	case tickMsg:
+		if m.notificationTimer > 0 {
+			m.notificationTimer--
+			if m.notificationTimer <= 0 {
+				m.notification = ""
+			} else {
+				return m, doTick()
+			}
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -565,6 +639,44 @@ func ellipsisLine(line string) string {
 	return indent + "..."
 }
 
+func doTick() tea.Cmd {
+	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
+		return tickMsg{}
+	})
+}
+
+func copyToClipboard(text string) error {
+	cmd := exec.Command("pbcopy")
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
+}
+
+func stripCommandBlocks(content string) string {
+	re := regexp.MustCompile("(?s)```commands\\s*\\n.*?\\n```")
+	return re.ReplaceAllString(content, "")
+}
+
+func parseCommandBlocks(content string) []string {
+	re := regexp.MustCompile("(?s)```commands\\s*\\n(.*?)\\n```")
+	matches := re.FindAllStringSubmatch(content, -1)
+	var commands []string
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			commandText := strings.TrimSpace(match[1])
+			lines := strings.Split(commandText, "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					commands = append(commands, line)
+				}
+			}
+		}
+	}
+
+	return commands
+}
+
 func analyzeReveal(content string) revealConfig {
 	lines := strings.Split(content, "\n")
 	var directive []int
@@ -636,6 +748,45 @@ func isListItem(line string) bool {
 	return false
 }
 
+func renderCommandHotkeys(commands []string, width int) string {
+	if len(commands) == 0 {
+		return ""
+	}
+
+	keyLabels := []string{"d", "f", "g", "t", "y", "u", "i", "o", "p", "z"}
+
+	var hotkeys []string
+	for i, cmd := range commands {
+		if i >= len(keyLabels) { // Only show first 9 commands
+			break
+		}
+		// Truncate long commands
+		displayCmd := cmd
+		if len(displayCmd) > 20 {
+			displayCmd = displayCmd[:17] + "..."
+		}
+		hotkey := fmt.Sprintf("%s %s", keyLabels[i], displayCmd)
+		hotkeys = append(hotkeys, hotkey)
+	}
+
+	if len(hotkeys) == 0 {
+		return ""
+	}
+
+	// Join hotkeys with separator
+	hotkeyText := strings.Join(hotkeys, "  ")
+
+	// Style the hotkey bar
+	hotkeyBar := lipgloss.NewStyle().
+		Background(lipgloss.Color("#2D3748")).
+		Foreground(lipgloss.Color("#E2E8F0")).
+		Width(width).
+		Padding(0, 1).
+		Render(hotkeyText)
+
+	return hotkeyBar
+}
+
 func (m model) View() string {
 	if m.showEditor {
 		editorView := m.editor.View()
@@ -682,13 +833,21 @@ func (m model) View() string {
 	if m.currentSlide < len(m.revealConfigs) {
 		slideContent = applyReveal(slideContent, m.revealConfigs[m.currentSlide], m.revealProgress[m.currentSlide])
 	}
+	// Strip command blocks from rendered content
+	slideContent = stripCommandBlocks(slideContent)
 	rendered, err := m.renderer.Render(slideContent)
 	if err != nil {
 		rendered = "Error rendering markdown: " + err.Error()
 	}
 
-	// Calculate available height for content (reserve 2 lines for bottom bar)
-	contentHeight := m.height - 2
+	// Calculate available height for content (reserve lines for bottom bars)
+	contentHeight := m.height - 2 // status + progress
+	if m.currentSlide < len(m.commandBlocks) && len(m.commandBlocks[m.currentSlide]) > 0 {
+		contentHeight-- // additional line for command hotkeys
+	}
+	if m.notification != "" {
+		contentHeight-- // additional line for notification
+	}
 
 	// Split rendered content into lines and fit to available height
 	lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
@@ -779,7 +938,32 @@ func (m model) View() string {
 	// Combine all sections
 	statusLine := lipgloss.JoinHorizontal(lipgloss.Top, leftSection, leftChevron, centerSection, rightChevron, rightSection)
 
-	return content + "\n" + statusLine + "\n" + progressBar
+	// Get command hotkeys for current slide
+	var commandHotkeyBar string
+	if m.currentSlide < len(m.commandBlocks) {
+		commandHotkeyBar = renderCommandHotkeys(m.commandBlocks[m.currentSlide], m.width)
+	}
+
+	// Create notification bar if there's a notification
+	var notificationBar string
+	if m.notification != "" {
+		notificationBar = lipgloss.NewStyle().
+			Background(lipgloss.Color("#059669")).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Width(m.width).
+			Padding(0, 1).
+			Render(m.notification)
+	}
+
+	// Build final layout
+	result := content + "\n" + statusLine + "\n" + progressBar
+	if commandHotkeyBar != "" {
+		result += "\n" + commandHotkeyBar
+	}
+	if notificationBar != "" {
+		result += "\n" + notificationBar
+	}
+	return result
 }
 
 func main() {
