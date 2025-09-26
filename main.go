@@ -64,10 +64,14 @@ func (rc revealConfig) totalItems() int {
 }
 
 func loadTheme() string {
-	if themeContent, err := os.ReadFile("slides/_theme.md"); err == nil {
-		theme := strings.TrimSpace(string(themeContent))
-		if theme != "" {
-			return theme
+	// Try current directory first, then slides directory
+	paths := []string{"_theme.md", "slides/_theme.md"}
+	for _, path := range paths {
+		if themeContent, err := os.ReadFile(path); err == nil {
+			theme := strings.TrimSpace(string(themeContent))
+			if theme != "" {
+				return theme
+			}
 		}
 	}
 	return "auto" // fallback to auto if no theme file or empty
@@ -111,7 +115,7 @@ func (m model) Init() tea.Cmd {
 }
 
 func loadSlides() tea.Msg {
-	files, err := os.ReadDir("slides")
+	files, err := os.ReadDir(".")
 	if err != nil {
 		return errMsg(err)
 	}
@@ -124,14 +128,22 @@ func loadSlides() tea.Msg {
 	var paths []string
 	var commandBlocks [][]string
 
-	// Load title from _title.md if it exists
-	if titleContent, err := os.ReadFile("slides/_title.md"); err == nil {
-		title = strings.TrimSpace(string(titleContent))
+	// Load title from _title.md if it exists (check current dir first, then slides dir)
+	titlePaths := []string{"_title.md", "slides/_title.md"}
+	for _, path := range titlePaths {
+		if titleContent, err := os.ReadFile(path); err == nil {
+			title = strings.TrimSpace(string(titleContent))
+			break
+		}
 	}
 
-	// Load author from _author.md if it exists
-	if authorContent, err := os.ReadFile("slides/_author.md"); err == nil {
-		author = strings.TrimSpace(string(authorContent))
+	// Load author from _author.md if it exists (check current dir first, then slides dir)
+	authorPaths := []string{"_author.md", "slides/_author.md"}
+	for _, path := range authorPaths {
+		if authorContent, err := os.ReadFile(path); err == nil {
+			author = strings.TrimSpace(string(authorContent))
+			break
+		}
 	}
 
 	// Collect markdown files (excluding files starting with underscore)
@@ -146,15 +158,14 @@ func loadSlides() tea.Msg {
 
 	// Read file contents
 	for _, filename := range filenames {
-		fullPath := filepath.Join("slides", filename)
-		content, err := os.ReadFile(fullPath)
+		content, err := os.ReadFile(filename)
 		if err != nil {
 			return errMsg(err)
 		}
 		slide := string(content)
 		slides = append(slides, slide)
 		configs = append(configs, analyzeReveal(slide))
-		paths = append(paths, fullPath)
+		paths = append(paths, filename)
 		commandBlocks = append(commandBlocks, parseCommandBlocks(slide))
 	}
 
@@ -163,7 +174,7 @@ func loadSlides() tea.Msg {
 
 func reloadSlide(slideIndex int) tea.Cmd {
 	return func() tea.Msg {
-		files, err := os.ReadDir("slides")
+		files, err := os.ReadDir(".")
 		if err != nil {
 			return errMsg(err)
 		}
@@ -186,13 +197,13 @@ func reloadSlide(slideIndex int) tea.Cmd {
 		}
 
 		// Read the specific slide content
-		content, err := os.ReadFile(filepath.Join("slides", filenames[slideIndex]))
+		content, err := os.ReadFile(filenames[slideIndex])
 		if err != nil {
 			return errMsg(err)
 		}
 
 		slide := string(content)
-		return slideReloadedMsg{slideIndex: slideIndex, content: slide, config: analyzeReveal(slide), path: filepath.Join("slides", filenames[slideIndex]), commandBlock: parseCommandBlocks(slide)}
+		return slideReloadedMsg{slideIndex: slideIndex, content: slide, config: analyzeReveal(slide), path: filenames[slideIndex], commandBlock: parseCommandBlocks(slide)}
 	}
 }
 

@@ -1,10 +1,14 @@
 # but status
 
-## Shows your:
+## Show the state of your active branches and uncommitted work
+
+Use `but status` to show:
 
 - active branches
 - basic commit info
 - uncommitted work
+
+`but status` is not just modified files, it is also a sort of smartlog
 
 ```commands
 but status
