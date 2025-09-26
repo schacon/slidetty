@@ -975,7 +975,110 @@ func (m model) View() string {
 	return result
 }
 
+func initProject() error {
+	// Check if slides directory already exists
+	if _, err := os.Stat("slides"); err == nil {
+		return fmt.Errorf("slides directory already exists")
+	}
+
+	// Create slides directory
+	if err := os.MkdirAll("slides", 0755); err != nil {
+		return fmt.Errorf("failed to create slides directory: %v", err)
+	}
+
+	// Create _title.md
+	titleContent := "My Presentation"
+	if err := os.WriteFile("slides/_title.md", []byte(titleContent), 0644); err != nil {
+		return fmt.Errorf("failed to create _title.md: %v", err)
+	}
+
+	// Create _author.md
+	authorContent := "Your Name"
+	if err := os.WriteFile("slides/_author.md", []byte(authorContent), 0644); err != nil {
+		return fmt.Errorf("failed to create _author.md: %v", err)
+	}
+
+	// Create example slides
+	slide1 := `# Welcome to Slidetty
+
+Welcome to your new presentation!
+
+This is your first slide. You can edit this file and add more slides.
+
+:reveal:
+- Navigate with arrow keys or h/j/k/l
+- Press 'q' to quit
+- Press 'e' to edit current slide
+- Press 'r' to reload slides`
+
+	slide2 := `# Features
+
+Slidetty supports many great features:
+
+:reveal:
+- **Markdown rendering** with beautiful syntax highlighting
+- **Progressive reveal** for bullet points
+- **Command hotkeys** for copying commands to clipboard
+- **Live editing** of slides
+- **Responsive design** that adapts to your terminal
+
+Try pressing 'j' and 'k' to reveal items progressively!`
+
+	slide3 := `# Getting Started
+
+Here's how to work with Slidetty:
+
+:reveal:
+1. **Create slides** - Add numbered markdown files (01-slide.md, 02-slide.md, etc.)
+2. **Edit content** - Press 'e' to edit the current slide
+3. **Add commands** - Use ` + "```commands```" + ` blocks for copyable commands
+4. **Customize theme** - Create _theme.md to set your preferred style
+
+` + "```commands" + `
+echo "Hello, World!"
+ls -la
+git status
+` + "```" + `
+
+Press 'd' to copy the first command above!`
+
+	// Write example slides
+	slides := map[string]string{
+		"01-welcome.md":  slide1,
+		"02-features.md": slide2,
+		"03-getting-started.md": slide3,
+	}
+
+	for filename, content := range slides {
+		if err := os.WriteFile(filepath.Join("slides", filename), []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to create %s: %v", filename, err)
+		}
+	}
+
+	fmt.Println("✅ Slideshow initialized successfully!")
+	fmt.Println("\nCreated files:")
+	fmt.Println("  slides/")
+	fmt.Println("  ├── _title.md")
+	fmt.Println("  ├── _author.md")
+	fmt.Println("  ├── 01-welcome.md")
+	fmt.Println("  ├── 02-features.md")
+	fmt.Println("  └── 03-getting-started.md")
+	fmt.Println("\nRun 'slidetty' to start your presentation!")
+
+	return nil
+}
+
 func main() {
+	// Check for init command
+	if len(os.Args) > 1 && os.Args[1] == "init" {
+		if err := initProject(); err != nil {
+			fmt.Printf("Error initializing project: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Run normal slideshow
 	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error running program: %v\n", err)
