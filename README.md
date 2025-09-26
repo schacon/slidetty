@@ -17,6 +17,10 @@ A beautiful TUI slideshow application built with [Bubble Tea](https://github.com
 go build -o slidetty main.go
 ```
 
+### Initializing
+
+You can run `slidetty init` to create a `slides` directory with example slides.
+
 ### Running
 
 Place your markdown slides in the `slides/` directory and run:
