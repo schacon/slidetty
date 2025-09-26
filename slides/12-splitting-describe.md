@@ -2,10 +2,7 @@
 
 ## create an empty commit and rub stuff into it
 
-```json
-{
-  "but new",
-  "but describe"
-}
-```
+```commands
+but new
+but describe
 ```

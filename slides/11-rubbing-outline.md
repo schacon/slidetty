@@ -1,5 +1,6 @@
 # Rubbing
 
+:reveal:
 - assigning changes
 - unassigning changes
 - amending commits

@@ -4,3 +4,6 @@
 
 - `but branch new`
 
+```commands
+but branch new
+```

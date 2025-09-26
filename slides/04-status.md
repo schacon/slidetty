@@ -6,10 +6,8 @@
 - basic commit info
 - uncommitted work
 
-```json
-{ 
-  "but status", 
-  "but status -f", 
-  "but restore f3eebf964569" 
-}
+```commands
+but status
+but status -f
+but restore f3eebf964569
 ```
