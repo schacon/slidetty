@@ -765,7 +765,15 @@ func renderCommandHotkeys(commands []string, width int) string {
 		if len(displayCmd) > 20 {
 			displayCmd = displayCmd[:17] + "..."
 		}
-		hotkey := fmt.Sprintf("%s %s", keyLabels[i], displayCmd)
+
+		// Style the key with darker background
+		keyStyle := lipgloss.NewStyle().
+			Background(lipgloss.Color("#1A602C")).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Padding(0, 1).
+			Render(keyLabels[i])
+
+		hotkey := fmt.Sprintf("%s %s", keyStyle, displayCmd)
 		hotkeys = append(hotkeys, hotkey)
 	}
 
@@ -778,8 +786,8 @@ func renderCommandHotkeys(commands []string, width int) string {
 
 	// Style the hotkey bar
 	hotkeyBar := lipgloss.NewStyle().
-		Background(lipgloss.Color("#2D3748")).
-		Foreground(lipgloss.Color("#E2E8F0")).
+		Background(lipgloss.Color("#162616")).
+		Foreground(lipgloss.Color("#FFFFFF")).
 		Width(width).
 		Padding(0, 1).
 		Render(hotkeyText)
@@ -956,13 +964,14 @@ func (m model) View() string {
 	}
 
 	// Build final layout
-	result := content + "\n" + statusLine + "\n" + progressBar
-	if commandHotkeyBar != "" {
-		result += "\n" + commandHotkeyBar
-	}
+	result := content
 	if notificationBar != "" {
 		result += "\n" + notificationBar
 	}
+	if commandHotkeyBar != "" {
+		result += "\n" + commandHotkeyBar
+	}
+  result += "\n" + statusLine + "\n" + progressBar
 	return result
 }
 
