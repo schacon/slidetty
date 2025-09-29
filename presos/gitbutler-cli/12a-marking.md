@@ -10,6 +10,6 @@ But we can even mark commits deeper in a branch or even stacked branches.
 
 ```commands
 but mark
-but mark -d
-but restore e88b0ef
+but unmark
+but restore 02d110ecaa15
 ```

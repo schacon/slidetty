@@ -5,7 +5,8 @@
       "Bash(go get:*)",
       "WebSearch",
       "Bash(go build:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(go vet:*)"
     ],
     "deny": [],
     "ask": []

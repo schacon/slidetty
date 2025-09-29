@@ -10,8 +10,10 @@ Use `but status` to show:
 
 `but status` is not just modified files, it is also a sort of smartlog
 
+like `git log origin/main..` for several active branches
+
 ```commands
-but status
-but status -f
-but restore e88b0ef
+git log --oneline --graph origin/main~..
+but status --files
+but restore 02d110ecaa15
 ```
