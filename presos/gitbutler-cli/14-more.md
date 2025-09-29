@@ -1,5 +1,9 @@
 # Any Questions?
 
+## Happy to answer any questions if I still have any time
+
+Often I go way over, so perhaps not.
+
 ```
   ___   ___      _   ___
  / _ \ ( _ )    / \ |__ \

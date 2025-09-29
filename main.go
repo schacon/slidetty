@@ -432,7 +432,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if err := copyToClipboard(commands[0]); err != nil {
 						m.notification = fmt.Sprintf("Copy error: %v", err)
 					} else {
-						m.notification = fmt.Sprintf("Copied: %s", commands[0])
+						// Truncate command text to fit notification bar
+						displayCmd := commands[0]
+						maxWidth := m.width - 12 // Reserve space for "Copied: " text and padding
+						if len(displayCmd) > maxWidth {
+							displayCmd = displayCmd[:maxWidth-3] + "..."
+						}
+						m.notification = fmt.Sprintf("Copied: %s", displayCmd)
 					}
 					m.notificationTimer = 3
 					return m, doTick()
@@ -496,8 +502,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if err := copyToClipboard(commands[cmdNum]); err != nil {
 						m.notification = fmt.Sprintf("Copy error: %v", err)
 					} else {
-						// Set success notification
-						m.notification = fmt.Sprintf("Copied: %s", commands[cmdNum])
+						// Truncate command text to fit notification bar
+						displayCmd := commands[cmdNum]
+						maxWidth := m.width - 12 // Reserve space for "Copied: " text and padding
+						if len(displayCmd) > maxWidth {
+							displayCmd = displayCmd[:maxWidth-3] + "..."
+						}
+						m.notification = fmt.Sprintf("Copied: %s", displayCmd)
 					}
 					m.notificationTimer = 3 // Show for 3 seconds
 					return m, doTick()
@@ -759,22 +770,23 @@ func isListItem(line string) bool {
 	return false
 }
 
-func renderCommandHotkeys(commands []string, width int) string {
+func renderCommandHotkeys(commands []string, width int) []string {
 	if len(commands) == 0 {
-		return ""
+		return []string{}
 	}
 
 	keyLabels := []string{"d", "f", "g", "t", "y", "u", "i", "o", "p", "z"}
 
-	var hotkeys []string
+	var hotkeyLines []string
 	for i, cmd := range commands {
-		if i >= len(keyLabels) { // Only show first 9 commands
+		if i >= len(keyLabels) { // Only show first 10 commands
 			break
 		}
-		// Truncate long commands
+		// Truncate long commands to fit width
 		displayCmd := cmd
-		if len(displayCmd) > 20 {
-			displayCmd = displayCmd[:17] + "..."
+		maxCmdWidth := width - 10 // Reserve space for key and padding
+		if len(displayCmd) > maxCmdWidth {
+			displayCmd = displayCmd[:maxCmdWidth-3] + "..."
 		}
 
 		// Style the key with darker background
@@ -785,25 +797,19 @@ func renderCommandHotkeys(commands []string, width int) string {
 			Render(keyLabels[i])
 
 		hotkey := fmt.Sprintf("%s %s", keyStyle, displayCmd)
-		hotkeys = append(hotkeys, hotkey)
+
+		// Style each hotkey line
+		hotkeyLine := lipgloss.NewStyle().
+			Background(lipgloss.Color("#162616")).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Width(width).
+			Padding(0, 1).
+			Render(hotkey)
+
+		hotkeyLines = append(hotkeyLines, hotkeyLine)
 	}
 
-	if len(hotkeys) == 0 {
-		return ""
-	}
-
-	// Join hotkeys with separator
-	hotkeyText := strings.Join(hotkeys, "  ")
-
-	// Style the hotkey bar
-	hotkeyBar := lipgloss.NewStyle().
-		Background(lipgloss.Color("#162616")).
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Width(width).
-		Padding(0, 1).
-		Render(hotkeyText)
-
-	return hotkeyBar
+	return hotkeyLines
 }
 
 func (m model) View() string {
@@ -861,8 +867,10 @@ func (m model) View() string {
 
 	// Calculate available height for content (reserve lines for bottom bars)
 	contentHeight := m.height - 2 // status + progress
+	var commandHotkeyLines []string
 	if m.currentSlide < len(m.commandBlocks) && len(m.commandBlocks[m.currentSlide]) > 0 {
-		contentHeight-- // additional line for command hotkeys
+		commandHotkeyLines = renderCommandHotkeys(m.commandBlocks[m.currentSlide], m.width)
+		contentHeight -= len(commandHotkeyLines) // reserve lines for each command hotkey
 	}
 	if m.notification != "" {
 		contentHeight-- // additional line for notification
@@ -957,11 +965,7 @@ func (m model) View() string {
 	// Combine all sections
 	statusLine := lipgloss.JoinHorizontal(lipgloss.Top, leftSection, leftChevron, centerSection, rightChevron, rightSection)
 
-	// Get command hotkeys for current slide
-	var commandHotkeyBar string
-	if m.currentSlide < len(m.commandBlocks) {
-		commandHotkeyBar = renderCommandHotkeys(m.commandBlocks[m.currentSlide], m.width)
-	}
+	// Command hotkey lines were already rendered above in commandHotkeyLines
 
 	// Create notification bar if there's a notification
 	var notificationBar string
@@ -979,10 +983,11 @@ func (m model) View() string {
 	if notificationBar != "" {
 		result += "\n" + notificationBar
 	}
-	if commandHotkeyBar != "" {
-		result += "\n" + commandHotkeyBar
+	// Add each command hotkey line
+	for _, hotkeyLine := range commandHotkeyLines {
+		result += "\n" + hotkeyLine
 	}
-  result += "\n" + statusLine + "\n" + progressBar
+	result += "\n" + statusLine + "\n" + progressBar
 	return result
 }
 

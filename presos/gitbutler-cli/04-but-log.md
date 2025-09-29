@@ -11,6 +11,6 @@ I honestly find _pretty annoying_ that users need to do complicated refspec work
 
 ```commands
 but log
-but log -s
+git log --oneline --graph origin/main~..
 ```
 

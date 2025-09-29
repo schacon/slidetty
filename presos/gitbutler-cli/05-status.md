@@ -13,5 +13,5 @@ Use `but status` to show:
 ```commands
 but status
 but status -f
-but restore f3eebf964569
+but restore e88b0ef
 ```

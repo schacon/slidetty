@@ -1,5 +1,7 @@
 # Rubbing
 
+## Let's try to do a bunch of cool stuff by just `but rub`ing things together
+
 :reveal:
 - assign => `ufile + branch`
 - unassign => `file + 00`

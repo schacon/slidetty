@@ -2,6 +2,8 @@
 
 ## Think of a Minecraft crafting table
 
+Planks + Books => Bookshelf
+
 ```
                =@%.              
             #@@-#-#@@:           

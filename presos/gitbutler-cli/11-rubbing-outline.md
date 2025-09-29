@@ -1,4 +1,6 @@
-# Rubbing
+# but rub
+
+## The `but rub` command can do so many things.
 
 :reveal:
 - assigning changes

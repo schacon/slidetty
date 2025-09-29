@@ -1,4 +1,4 @@
-# Multiple Stages
+# Multiple Staging Areas
 
 ## Stage changes to different branches
 

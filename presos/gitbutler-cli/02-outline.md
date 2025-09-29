@@ -1,7 +1,9 @@
 # Overview
 
+## Ok, what are we going to talk about today?
+
 :reveal:
-- Status (status, log)
+- Status
 - Branching
 - Committing
 - Rubbing
