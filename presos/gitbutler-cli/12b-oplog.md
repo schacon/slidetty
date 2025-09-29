@@ -4,11 +4,14 @@
 
 The `git reflog` command is unusable by mortals.
 
-It also _only_ records when there is a reference movement, not uncommitted file changes.
+It also _only_ records when there is a reference movement, not:
+
+- uncommitted file changes
+- index assignments
 
 ```commands
 but oplog
 but undo
-but restore e88b0ef
+but restore 02d110ecaa15
 
 ```

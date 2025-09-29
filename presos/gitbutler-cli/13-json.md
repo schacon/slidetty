@@ -4,9 +4,8 @@
 
 Every command with interesting output can take a `-j` or `--json` to instead return the same information in JSON.
 
-_Why don't more CLI tools do this?_
 
 ```commands
-but -j log | jq
+git blame --porcelain README.md
 but -j status | jq
 ```

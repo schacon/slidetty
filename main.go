@@ -36,11 +36,22 @@ type model struct {
 	commandBlocks  [][]string // commands for each slide
 	notification   string
 	notificationTimer int
+	// Timer fields
+	timerDuration    time.Duration // Total presentation duration
+	timerStartTime   time.Time     // When timer was started
+	timerElapsed     time.Duration // Elapsed time when paused
+	timerRunning     bool          // Whether timer is currently running
+	timerProgress    progress.Model // Progress bar for timer
+	waitingForReset  bool          // Whether waiting for 'y' confirmation after 'p' press
+	blinkCounter     int           // Counter for blinking paused text
+	timerTicking     bool          // Whether timer tick loop is active
 }
 
 type errMsg error
 
 type tickMsg struct{}
+
+type timerTickMsg struct{}
 
 type slideReloadedMsg struct {
 	slideIndex    int
@@ -96,6 +107,9 @@ func initialModel() model {
 	// Initialize progress bar with gradient
 	prog := progress.New(progress.WithDefaultGradient())
 
+	// Initialize timer progress bar with different gradient
+	timerProg := progress.New(progress.WithSolidFill("#FF6B35"))
+
 	return model{
 		slides:         []string{},
 		slidePaths:     []string{},
@@ -107,6 +121,7 @@ func initialModel() model {
 		revealConfigs:  nil,
 		revealProgress: make(map[int]int),
 		commandBlocks:  [][]string{},
+		timerProgress:  timerProg,
 	}
 }
 
@@ -127,6 +142,7 @@ func loadSlides() tea.Msg {
 	var configs []revealConfig
 	var paths []string
 	var commandBlocks [][]string
+	var timerDuration time.Duration
 
 	// Load title from _title.md if it exists (check current dir first, then slides dir)
 	titlePaths := []string{"_title.md", "slides/_title.md"}
@@ -143,6 +159,18 @@ func loadSlides() tea.Msg {
 		if authorContent, err := os.ReadFile(path); err == nil {
 			author = strings.TrimSpace(string(authorContent))
 			break
+		}
+	}
+
+	// Load timer duration from _time if it exists (check current dir first, then slides dir)
+	timePaths := []string{"_time", "slides/_time"}
+	for _, path := range timePaths {
+		if timeContent, err := os.ReadFile(path); err == nil {
+			timeStr := strings.TrimSpace(string(timeContent))
+			if minutes, parseErr := time.ParseDuration(timeStr + "m"); parseErr == nil {
+				timerDuration = minutes
+				break
+			}
 		}
 	}
 
@@ -169,7 +197,7 @@ func loadSlides() tea.Msg {
 		commandBlocks = append(commandBlocks, parseCommandBlocks(slide))
 	}
 
-	return slidesLoadedMsg{slides: slides, title: title, author: author, revealConfigs: configs, paths: paths, commandBlocks: commandBlocks}
+	return slidesLoadedMsg{slides: slides, title: title, author: author, revealConfigs: configs, paths: paths, commandBlocks: commandBlocks, timerDuration: timerDuration}
 }
 
 func reloadSlide(slideIndex int) tea.Cmd {
@@ -214,6 +242,7 @@ type slidesLoadedMsg struct {
 	author        string
 	revealConfigs []revealConfig
 	commandBlocks [][]string
+	timerDuration time.Duration
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -319,6 +348,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.renderer = r
 		}
 		m.progress.Width = msg.Width - 4
+		m.timerProgress.Width = msg.Width - 4
 		return m, nil
 
 	case slidesLoadedMsg:
@@ -328,6 +358,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.author = msg.author
 		m.revealConfigs = msg.revealConfigs
 		m.commandBlocks = msg.commandBlocks
+		m.timerDuration = msg.timerDuration
 		m.revealProgress = make(map[int]int, len(msg.revealConfigs))
 		for idx, cfg := range msg.revealConfigs {
 			if cfg.totalItems() > 0 {
@@ -341,8 +372,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.currentSlide = len(m.slides) - 1
 		}
 		percentage := float64(m.currentSlide+1) / float64(len(m.slides))
-		m.progress.SetPercent(percentage)
-		return m, nil
+		cmd := m.progress.SetPercent(percentage)
+
+		// Start timer ticking if timer is configured (for blinking when paused)
+		var timerCmd tea.Cmd
+		if m.timerDuration > 0 && !m.timerTicking {
+			m.timerTicking = true
+			timerCmd = doTimerTick()
+		}
+
+		return m, tea.Batch(cmd, timerCmd)
 
 	case slideReloadedMsg:
 		if msg.slideIndex >= 0 && msg.slideIndex < len(m.slides) {
@@ -396,8 +435,66 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			return m, tea.Quit
+
+		case "q":
+			return m, tea.Quit
+
+		case "w":
+			// Handle timer start/pause only if timer is configured
+			if m.timerDuration > 0 {
+				if m.waitingForReset {
+					m.waitingForReset = false
+					return m, nil
+				}
+
+				if m.timerRunning {
+					// Pause timer
+					m.timerRunning = false
+					m.timerElapsed += time.Since(m.timerStartTime)
+				} else {
+					// Start/Resume timer
+					m.timerRunning = true
+					m.timerStartTime = time.Now()
+					// Start timer tick loop if not already running
+					if !m.timerTicking {
+						m.timerTicking = true
+						return m, tea.Batch(updateTimerProgress(&m), doTimerTick())
+					}
+				}
+				// Update progress immediately after state change
+				return m, updateTimerProgress(&m)
+			}
+			return m, nil
+
+		case "p":
+			// Handle timer reset confirmation
+			if m.timerDuration > 0 {
+				if m.waitingForReset {
+					m.waitingForReset = false
+					return m, nil
+				}
+				m.waitingForReset = true
+				m.notification = "Press 'y' to confirm timer reset, any other key to cancel"
+				m.notificationTimer = 5 // Show for 5 seconds
+				return m, doTick()
+			}
+			return m, nil
+
+		case "y":
+			// Confirm timer reset
+			if m.waitingForReset && m.timerDuration > 0 {
+				m.waitingForReset = false
+				m.timerRunning = false
+				m.timerElapsed = 0
+				m.timerStartTime = time.Time{}
+				m.timerProgress.SetPercent(0)
+				m.notification = "Timer reset"
+				m.notificationTimer = 2
+				return m, doTick()
+			}
+			return m, nil
 
 		case "e":
 			if len(m.slides) == 0 || m.currentSlide < 0 || m.currentSlide >= len(m.slides) {
@@ -454,7 +551,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentSlide++
 				percentage := float64(m.currentSlide+1) / float64(len(m.slides))
 				cmd := m.progress.SetPercent(percentage)
-				return m, cmd
+				timerCmd := updateTimerProgress(&m)
+				return m, tea.Batch(cmd, timerCmd)
 			}
 			return m, nil
 
@@ -466,7 +564,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentSlide--
 				percentage := float64(m.currentSlide+1) / float64(len(m.slides))
 				cmd := m.progress.SetPercent(percentage)
-				return m, cmd
+				timerCmd := updateTimerProgress(&m)
+				return m, tea.Batch(cmd, timerCmd)
 			}
 			return m, nil
 
@@ -475,7 +574,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentSlide++
 				percentage := float64(m.currentSlide+1) / float64(len(m.slides))
 				cmd := m.progress.SetPercent(percentage)
-				return m, cmd
+				timerCmd := updateTimerProgress(&m)
+				return m, tea.Batch(cmd, timerCmd)
 			}
 			return m, nil
 
@@ -484,11 +584,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.currentSlide--
 				percentage := float64(m.currentSlide+1) / float64(len(m.slides))
 				cmd := m.progress.SetPercent(percentage)
-				return m, cmd
+				timerCmd := updateTimerProgress(&m)
+				return m, tea.Batch(cmd, timerCmd)
 			}
 			return m, nil
 
-		case "f", "g", "t", "y", "u", "i", "o", "p", "z":
+		case "f", "g", "t", "u", "i", "o", "z":
+			// Cancel timer reset confirmation if waiting
+			if m.waitingForReset {
+				m.waitingForReset = false
+				m.notification = ""
+				m.notificationTimer = 0
+				return m, nil
+			}
+
 			// Handle command hotkeys (only if current slide has commands)
 			if m.currentSlide < len(m.commandBlocks) && len(m.commandBlocks[m.currentSlide]) > 0 {
 				commands := m.commandBlocks[m.currentSlide]
@@ -515,12 +624,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+
+		default:
+			// Cancel timer reset confirmation for any other key
+			if m.waitingForReset {
+				m.waitingForReset = false
+				m.notification = ""
+				m.notificationTimer = 0
+				return m, nil
+			}
 		}
 
 	case progress.FrameMsg:
 		progressModel, cmd := m.progress.Update(msg)
 		m.progress = progressModel.(progress.Model)
-		return m, cmd
+		timerProgressModel, timerCmd := m.timerProgress.Update(msg)
+		m.timerProgress = timerProgressModel.(progress.Model)
+		return m, tea.Batch(cmd, timerCmd)
 
 	case tickMsg:
 		if m.notificationTimer > 0 {
@@ -530,6 +650,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				return m, doTick()
 			}
+		}
+		return m, nil
+
+	case timerTickMsg:
+		if m.timerDuration > 0 && m.timerTicking {
+			// Update timer progress regardless of running state
+			cmd := updateTimerProgress(&m)
+
+			// Increment blink counter for paused state blinking
+			m.blinkCounter++
+
+			// Continue ticking to keep blinking active
+			return m, tea.Batch(cmd, doTimerTick())
 		}
 		return m, nil
 	}
@@ -665,6 +798,32 @@ func doTick() tea.Cmd {
 	return tea.Tick(time.Second, func(t time.Time) tea.Msg {
 		return tickMsg{}
 	})
+}
+
+func doTimerTick() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return timerTickMsg{}
+	})
+}
+
+func updateTimerProgress(m *model) tea.Cmd {
+	if m.timerDuration <= 0 {
+		return nil
+	}
+
+	var totalElapsed time.Duration
+	if m.timerRunning {
+		totalElapsed = m.timerElapsed + time.Since(m.timerStartTime)
+	} else {
+		totalElapsed = m.timerElapsed
+	}
+
+	// Update timer progress bar
+	percentage := float64(totalElapsed) / float64(m.timerDuration)
+	if percentage > 1.0 {
+		percentage = 1.0
+	}
+	return m.timerProgress.SetPercent(percentage)
 }
 
 func copyToClipboard(text string) error {
@@ -875,6 +1034,9 @@ func (m model) View() string {
 	if m.notification != "" {
 		contentHeight-- // additional line for notification
 	}
+	if m.timerDuration > 0 {
+		contentHeight -= 2 // timer display + timer progress bar
+	}
 
 	// Split rendered content into lines and fit to available height
 	lines := strings.Split(strings.TrimRight(rendered, "\n"), "\n")
@@ -978,6 +1140,48 @@ func (m model) View() string {
 			Render(m.notification)
 	}
 
+	// Create timer display if timer is configured
+	var timerDisplay string
+	if m.timerDuration > 0 {
+		var currentElapsed time.Duration
+		if m.timerRunning {
+			currentElapsed = m.timerElapsed + time.Since(m.timerStartTime)
+		} else {
+			currentElapsed = m.timerElapsed
+		}
+
+		remaining := m.timerDuration - currentElapsed
+		if remaining < 0 {
+			remaining = 0
+		}
+
+		// Format time display
+		elapsedMin := int(currentElapsed.Minutes())
+		remainingMin := int(remaining.Minutes())
+
+		var status string
+		if m.timerRunning {
+			status = "Running"
+		} else {
+			// Make "Paused" blink by showing/hiding it every 5 ticks (about 500ms)
+			if (m.blinkCounter/5)%2 == 0 {
+				status = "Paused"
+			} else {
+				status = "      " // Same length as "Paused" to avoid layout shifts
+			}
+		}
+
+		timerInfo := fmt.Sprintf("Timer: %dm | %dm - %s",
+			elapsedMin, remainingMin, status)
+
+		timerDisplay = lipgloss.NewStyle().
+			Background(lipgloss.Color("#8B4513")).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Width(m.width).
+			Padding(0, 1).
+			Render(timerInfo)
+	}
+
 	// Build final layout
 	result := content
 	if notificationBar != "" {
@@ -988,6 +1192,13 @@ func (m model) View() string {
 		result += "\n" + hotkeyLine
 	}
 	result += "\n" + statusLine + "\n" + progressBar
+
+	// Add timer display and progress bar at the very bottom
+	if timerDisplay != "" {
+		timerProgressBar := m.timerProgress.View()
+		result += "\n" + timerDisplay + "\n" + timerProgressBar
+	}
+
 	return result
 }
 
