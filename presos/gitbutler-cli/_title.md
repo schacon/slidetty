@@ -1,1 +1,1 @@
-But CLI Tour
+But Tour
